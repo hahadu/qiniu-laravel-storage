@@ -1,0 +1,49 @@
+{
+  "name": "hahadu/qiniu-laravel-storage",
+  "type": "library",
+  "description": "Qiniu Resource (Cloud) Storage SDK for Laravel 9/10/11/12",
+  "keywords": [
+    "qiniu",
+    "storage",
+    "sdk",
+    "cloud",
+    "laravel"
+  ],
+  "license": "MIT",
+  "authors": [
+      {
+          "name": "zgldh",
+          "email": "zgldh@hotmail.com",
+          "role": "Original Developer"
+      },
+      {
+          "name": "abcsun",
+          "email": "chenglongsun_nj@163.com",
+          "role": "Developer",
+          "homepage": "http://github.com/abcsun"
+      },
+      {
+          "name": "hahdu",
+          "email": "582167246@qq.com",
+          "role": "Developer",
+          "homepage": "http://github.com/hahadu"
+      }
+  ],
+  "require": {
+    "php": ">=8.0",
+    "qiniu/php-sdk": "^7.14",
+    "league/flysystem": "^3.23"
+  },
+  "autoload": {
+    "psr-4": {
+      "Hahadu\\QiniuStorage\\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "Hahadu\\QiniuStorage\\QiniuFilesystemServiceProvider"
+      ]
+    }
+  }
+}
