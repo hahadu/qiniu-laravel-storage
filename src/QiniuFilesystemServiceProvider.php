@@ -29,13 +29,13 @@ class QiniuFilesystemServiceProvider extends ServiceProvider
         Storage::extend(
             'qiniu',
             function ($app, $config) {;
-                $domains = when(isset($config['domains']),$config['domains'],[
+                $domains = $config['domains'] ?? [
                     'default' => $config['domain'],
-                    'https'   => null,
-                    'custom'  => null
-                ]);
+                    'https' => null,
+                    'custom' => null
+                ];
 
-                $qiniu_adapter = new QiniuAdapter(
+                $adapter = new QiniuAdapter(
                     Arr::get($config,'access_key'),
                     Arr::get($config,'secret_key'),
                     Arr::get($config,'bucket'),
@@ -44,9 +44,9 @@ class QiniuFilesystemServiceProvider extends ServiceProvider
                     Arr::get($config,'access', 'public'),
                     Arr::get($config,'hotlink_prevention_key' , null)
                 );
-                $file_system = new Filesystem($qiniu_adapter);
 
-                return new FilesystemAdapter($file_system, $qiniu_adapter, $config);
+                return new FilesystemAdapter(
+                    new Filesystem($adapter), $adapter, $config);
             }
         );
     }

@@ -1,6 +1,7 @@
 <?php
 namespace Hahadu\QiniuStorage;
 
+use Exception;
 use Illuminate\Support\Facades\Log;
 use League\Flysystem\Config;
 use League\Flysystem\FileAttributes;
@@ -43,15 +44,22 @@ class QiniuAdapter implements FilesystemAdapter
     private $uploadToken = null;
 
     public function __construct(
-        private string $access_key,
-        private string $secret_key,
-        private string $bucket,
-        private array $domains,
-        private ?string $notify_url = null,
-        private string $access = self::ACCESS_PUBLIC,
-        private ?string $hotlinkPreventionKey = null
+        private readonly string $access_key,
+        private readonly string $secret_key,
+        private readonly string $bucket,
+        private readonly array  $domains,
+        private ?string         $notify_url = null,
+        private readonly string $access = self::ACCESS_PUBLIC,
+        private ?string         $hotlinkPreventionKey = null
     )
     {
+        $this->auth = new Auth($this->access_key, $this->secret_key);
+        $this->upload_manager = new UploadManager();
+        $this->bucket_manager = new BucketManager($this->auth);
+        $this->operation = new Operation(
+            $this->domains['default'],
+            $this->access === self::ACCESS_PUBLIC ? null : $this->auth
+        );
         $this->setPathPrefix('http://' . $this->domains['default']);
         $this->setDomainPrefix('http://' . $this->domains['default'], 'default');
         $this->setDomainPrefix('https://' . $this->domains['https'], 'https');
@@ -84,40 +92,21 @@ class QiniuAdapter implements FilesystemAdapter
 
     private function getAuth()
     {
-        if ($this->auth == null) {
-            $this->auth = new Auth($this->access_key, $this->secret_key);
-        }
-
         return $this->auth;
     }
 
     private function getUploadManager()
     {
-        if ($this->upload_manager == null) {
-            $this->upload_manager = new UploadManager();
-        }
-
         return $this->upload_manager;
     }
 
     private function getBucketManager()
     {
-        if ($this->bucket_manager == null) {
-            $this->bucket_manager = new BucketManager($this->getAuth());
-        }
-
         return $this->bucket_manager;
     }
 
     private function getOperation()
     {
-        if ($this->operation == null) {
-            $this->operation = new Operation(
-                $this->domains['default'],
-                $this->access === self::ACCESS_PUBLIC ? null : $this->getAuth()
-            );
-        }
-
         return $this->operation;
     }
 
@@ -150,7 +139,7 @@ class QiniuAdapter implements FilesystemAdapter
      * @param string $mime
      * @param bool $checkCrc
      * @return mixed
-     * @throws \Exception
+     * @throws Exception
      */
     private function qiniuPutFile(
         string $upToken,
@@ -161,27 +150,27 @@ class QiniuAdapter implements FilesystemAdapter
         bool $checkCrc = false
     ): mixed {
         if ($fileResource === false) {
-            throw new \Exception("File cannot be opened", 1);
+            throw new Exception("File cannot be opened", 1);
         }
 
         $params = UploadManager::trimParams($params);
         $stat = fstat($fileResource);
-        $size = $stat['size'];
-
-        if ($size <= QiniuConfig::BLOCK_SIZE) {
-            $data = fread($fileResource, $size);
-            fclose($fileResource);
-
-            if ($data === false) {
-                throw new \RuntimeException("File cannot be read", 1);
+        $size = (int)$stat['size'];
+        try {
+            if ($size <= QiniuConfig::BLOCK_SIZE) {
+                $data = stream_get_contents($fileResource, $size);
+                if ($data === false) {
+                    throw new \RuntimeException("File cannot be read", 1);
+                }
+                return FormUploader::put($upToken,$key,$data,new QiniuConfig(),$params,$mime,basename($key));
             }
-            return FormUploader::put($upToken,$key,$data,new QiniuConfig(),$params,$mime,basename($key));
+
+            $up = new ResumeUploader($upToken,$key,$fileResource,$size,$params,$mime,new QiniuConfig());
+
+            $ret = $up->upload(basename($key));
+        } finally {
+            fclose($fileResource); // 确保文件资源被关闭
         }
-
-        $up = new ResumeUploader($upToken,$key,$fileResource,$size,$params,$mime,new QiniuConfig());
-
-        $ret = $up->upload(basename($key));
-        fclose($fileResource);
 
         return $ret;
     }
@@ -282,16 +271,16 @@ class QiniuAdapter implements FilesystemAdapter
     /**
      * @DriverFunction
      * @param $path
-     * @param string|array $settings ['domain'=>'default', 'expires'=>3600]
+     * @param array|string $settings ['domain'=>'default', 'expires'=>3600]
      * @return string
      */
-    public function privateDownloadUrl($path, $settings = 'default')
+    public function privateDownloadUrl($path, array|string $settings = 'default')
     {
         $expires = 3600;
         $domain = 'default';
         if (is_array($settings)) {
-            $expires = isset($settings['expires']) ? $settings['expires'] : $expires;
-            $domain = isset($settings['domain']) ? $settings['domain'] : $domain;
+            $expires = $settings['expires'] ?? $expires;
+            $domain = $settings['domain'] ?? $domain;
         } else {
             $domain = $settings;
         }
@@ -308,18 +297,19 @@ class QiniuAdapter implements FilesystemAdapter
      * @DriverFunction
      * @param null $path
      * @param null $fops
-     * @param null $pipline
+     * @param null $pipeline
      * @param bool $force
+     * @param null $notifyUrl
      * @return bool
      */
-    public function persistentFop($path = null, $fops = null, $pipline = null, $force = false, $notifyUrl = null)
+    public function persistentFop($path = null, $fops = null, $pipeline = null, bool $force = false, $notifyUrl = null)
     {
         $auth = $this->getAuth();
 
         $pfop = new PersistentFop($auth);
 
         $notifyUrl = is_null($notifyUrl) ? $this->notify_url : $notifyUrl;
-        [$id, $error] = $pfop->execute($this->bucket, $path, $fops, $pipline, $notifyUrl, $force);
+        [$id, $error] = $pfop->execute($this->bucket, $path, $fops, $pipeline, $notifyUrl, $force);
 
         if ($error != null) {
             $this->logQiniuError($error);
@@ -335,7 +325,7 @@ class QiniuAdapter implements FilesystemAdapter
      * @param $id
      * @return array
      */
-    public function persistentStatus($id)
+    public function persistentStatus($id): array
     {
         $auth = $this->getAuth();
         $pfop = new PersistentFop($auth);
@@ -447,9 +437,9 @@ class QiniuAdapter implements FilesystemAdapter
      */
     public function uploadToken(
         $path = null,
-        $expires = 3600,
+        int $expires = 3600,
         $policy = null,
-        $strictPolicy = true
+        bool $strictPolicy = true
     )
     {
         $auth = $this->getAuth();
@@ -473,7 +463,7 @@ class QiniuAdapter implements FilesystemAdapter
      * @param $body
      * @return bool
      */
-    public function verifyCallback($contentType, $originAuthorization, $url, $body)
+    public function verifyCallback($contentType, $originAuthorization, $url, $body): bool
     {
         $auth = $this->getAuth();
 
@@ -485,7 +475,7 @@ class QiniuAdapter implements FilesystemAdapter
      * @param $localFilePath
      * @return array
      */
-    public function calculateQetag($localFilePath)
+    public function calculateQetag($localFilePath): array
     {
         return Etag::sum($localFilePath);
     }
@@ -549,7 +539,7 @@ class QiniuAdapter implements FilesystemAdapter
      * @param Config $config
      *
      * @return mixed false or file metadata
-     * @throws \Exception
+     * @throws Exception
      */
     public function writeStream(string $path, $contents, Config $config): void
     {
@@ -626,13 +616,10 @@ class QiniuAdapter implements FilesystemAdapter
                     'type'      => 'file',
                     'path'      => $item['key'],
                     'timestamp' => $item['putTime'],
+                    'size'      => $item['fsize'],
                 ];
 
-                if ($normalized['type'] === 'file') {
-                    $normalized['size'] = $item['fsize'];
-                }
-
-                array_push($contents, $normalized);
+                $contents[] = $normalized;
             }
 
             return $contents;

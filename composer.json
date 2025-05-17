@@ -1,5 +1,5 @@
 {
-  "name": "hahadu/qiniu-laravel-storage",
+  "name": "zgldh/qiniu-laravel-storage",
   "type": "library",
   "description": "Qiniu Resource (Cloud) Storage SDK for Laravel 9/10/11/12",
   "keywords": [
@@ -30,7 +30,7 @@
       }
   ],
   "require": {
-    "php": ">=8.0",
+    "php": ">=8.2",
     "qiniu/php-sdk": "^7.14",
     "league/flysystem": "^3.23"
   },
